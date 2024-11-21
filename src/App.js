@@ -6,11 +6,14 @@ const App = () => {
   const [messages, setMessages] = useState([]);
   const [database, setDatabase] = useState([]);
   const [isListening, setIsListening] = useState(false);
+  const [context, setContext] = useState(null); // Track context (e.g., last topic or question)
   const userInputRef = useRef(null);
   const recognitionRef = useRef(null);
-  const dbRef = useRef(database)
+  const dbRef = useRef(database);
 
-  useEffect(() => { dbRef.current = database })
+  useEffect(() => {
+    dbRef.current = database;
+  });
 
   // Fetch CSV data and parse it
   useEffect(() => {
@@ -21,7 +24,7 @@ const App = () => {
           header: false,
           skipEmptyLines: true,
           complete: (result) => {
-            setDatabase(result.data); // Updated database with parsed data
+            setDatabase(result.data); // Update database with parsed data
           },
         });
       })
@@ -39,7 +42,6 @@ const App = () => {
       recognition.interimResults = false;
       recognition.continuous = false;
 
-      // Set up event listeners for recognition events
       recognition.onstart = () => setIsListening(true);
       recognition.onend = () => setIsListening(false);
       recognition.onerror = (event) => {
@@ -49,10 +51,8 @@ const App = () => {
 
       recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
-        console.log('Speech Input Detected:', transcript); // Debugging: log the detected speech
-        // userInputRef.current.value = transcript;
-        console.log(transcript)
-        sendMessage(transcript); // Send recognized speech as a message
+        console.log('Speech Input Detected:', transcript);
+        sendMessage(transcript);
       };
 
       recognitionRef.current = recognition;
@@ -60,7 +60,6 @@ const App = () => {
       console.error('Speech Recognition is not supported in this browser.');
     }
 
-    // Cleanup the speech recognition on unmount
     return () => {
       if (recognitionRef.current) {
         recognitionRef.current.abort();
@@ -68,12 +67,10 @@ const App = () => {
     };
   }, []);
 
-  // Start listening for voice input
   const startListening = () => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.start();
-        console.log('Speech recognition started'); // Debugging: log when speech recognition starts
       } catch (error) {
         console.error('Error starting speech recognition:', error);
       }
@@ -82,54 +79,82 @@ const App = () => {
     }
   };
 
-  // Stop listening for voice input
   const stopListening = () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
     }
   };
 
-  // Function to send message (either from typing or voice input)
+  // Tokenize input string
+  const tokenize = (input) => {
+    return input.trim().toLowerCase().split(/\s+/); // Splits by whitespace
+  };
+
+  // Function to check if tokenized input matches any entry in the dataset
+  const matchInputWithDatabase = (tokens) => {
+    for (const entry of dbRef.current) {
+      const databaseTokens = tokenize(entry[0]); // Tokenize the database query
+      if (tokens.some((token) => databaseTokens.includes(token))) {
+        return entry[1]; // Return the matched response
+      }
+    }
+    return null; // No match found
+  };
+
+  // Function to handle context-based response
+  const handleContextBasedResponse = (userInput) => {
+    if (context) {
+      if (context === 'weather' && userInput.includes('temperature')) {
+        return "I can give you the temperature. Please specify the city.";
+      }
+      // Add more context-based responses as needed
+    }
+    return null;
+  };
+
+  // Function to send a message (either from typing or voice input)
   const sendMessage = (userInput) => {
-    const inputText = userInput.trim().toLowerCase(); // Trim and lowercase user input
-  
+    const inputText = userInput.trim();
     if (!inputText) {
       alert('Please enter a message!');
       return;
     }
-  
-    console.log('User input:', inputText); // Debugging: log the user input
-  
-    // Update message state with user message
+
+    const tokens = tokenize(inputText); // Tokenize the user input
+    const contextResponse = handleContextBasedResponse(inputText); // Check for context-based response
+
+    let botResponse;
+    if (contextResponse) {
+      botResponse = contextResponse; // Contextual response found
+    } else {
+      botResponse = matchInputWithDatabase(tokens); // Otherwise, look for a match in the database
+    }
+
+    // Add user message
     setMessages((prevMessages) => [
       ...prevMessages,
       { sender: 'user', text: inputText },
     ]);
 
-  
-    // Check if user input matches any entry in the database
-    const matchedResponse = dbRef.current.find((entry) => {
-      // Normalize both input and CSV entry
-      const databaseQuery = entry[0].trim().toLowerCase();
-      return databaseQuery.includes(inputText);
-    });
-  
-    // If match found, send bot response, otherwise send default response
-    if (matchedResponse) {
-      console.log('Bot response:', matchedResponse[1]); // Debugging: log the bot's response
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'bot', text: matchedResponse[1] },
-      ]);
+    // Update context based on user input (e.g., set context to "weather" if user asks about weather)
+    if (inputText.toLowerCase().includes('weather')) {
+      setContext('weather');
+    } else if (inputText.toLowerCase().includes('temperature')) {
+      setContext('temperature');
     } else {
-      console.log("No match found in database, sending default response"); // Debugging: log if no match is found
-      setMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: 'bot', text: "I'm sorry, I don't have an answer for that." },
-      ]);
+      setContext(null); // Reset context if no specific context is found
     }
+
+    // Add bot response
+    setMessages((prevMessages) => [
+      ...prevMessages,
+      {
+        sender: 'bot',
+        text: botResponse || "I'm sorry, I don't have an answer for that.",
+      },
+    ]);
   };
-  
+
   return (
     <div id="chat-container">
       <div id="chat-messages">
@@ -149,7 +174,9 @@ const App = () => {
           ref={userInputRef}
           placeholder="Type your message..."
         />
-        <button onClick={() => sendMessage(userInputRef.current.value)}>Send</button>
+        <button onClick={() => sendMessage(userInputRef.current.value)}>
+          Send
+        </button>
         <button
           id="audio-btn"
           onClick={isListening ? stopListening : startListening}
